@@ -225,10 +225,74 @@ namespace LargeFileReplacer
                 }
             }
         }
-
+        async Task Summarize()
+        {
+            using (var readStream = OpenFileRead())
+            {
+                if (readStream == null) return;
+                using (var reader = new StreamReader(readStream, Encoding.UTF8))
+                {
+                    StackPanel sp = new StackPanel { Orientation = Orientation.Vertical };
+                    //for (int i = 0; i < 100; i++) sp.Children.Add(new Label { Content = $"#{i}" });
+                    new Window { Content = new ScrollViewer { Content = sp }, Width = 200 }.Show();
+                    Dictionary<char, long> charSet = new Dictionary<char, long>();
+                    Dictionary<char, Label> labels = new Dictionary<char, Label>();
+                    const int chunkSize = 1000000;
+                    long cnt = 0;
+                    Label labelTotal= new Label { Content = "..." };
+                    {
+                        Label _ = new Label { Content = "Total" };
+                        Grid.SetColumn(_, 0);
+                        Grid.SetColumn(labelTotal, 1);
+                        sp.Children.Add(new Grid
+                        {
+                            ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) } },
+                            Children = { _, labelTotal }
+                        });
+                    }
+                    while (true)
+                    {
+                        var buffer = new char[chunkSize];
+                        var n = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
+                        if (n == 0) break;
+                        cnt += n;
+                        this.Title = $"Processing {cnt} / {reader.BaseStream.Length} ({(100.0 * cnt / reader.BaseStream.Length).ToString("F3")}%)";
+                        Array.Resize(ref buffer, n);
+                        buffer =await Task.Run(()=> buffer.Where(c => Targets.IsMatch(c)).ToArray());
+                        foreach (char c in buffer)
+                        {
+                            if (!charSet.ContainsKey(c))
+                            {
+                                charSet.Add(c, 0);
+                                Label l = new Label { Content = "..." };
+                                {
+                                    TextBox _ = new TextBox { Text = c.ToString() };
+                                    Grid.SetColumn(_, 0);
+                                    Grid.SetColumn(l, 1);
+                                    sp.Children.Add(new Grid
+                                    {
+                                        ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) } },
+                                        Children = { _, l }
+                                    });
+                                }
+                                labels.Add(c, l);
+                            }
+                            charSet[c]++;
+                        }
+                        foreach (var p in charSet)
+                        {
+                            labels[p.Key].Content = p.Value.ToString();
+                            await Task.Delay(0);
+                        }
+                        labelTotal.Content = charSet.Sum(p => p.Value).ToString();
+                    }
+                    this.Title = $"OK - {DateTime.Now}";
+                }
+            }
+        }
         void InitializeViews()
         {
-            this.Width = 900;
+            this.Width = 950;
             var margin = new Thickness(0, 0, 0, 0);
             var gridEmpty = new Grid
             {
@@ -294,7 +358,7 @@ namespace LargeFileReplacer
                     gridSelect.Set(0,1),
                 }
             };
-            int columnSpan = 3;
+            int columnSpan = 4;
             this.Content = new Grid
             {
                 Margin = margin,
@@ -303,6 +367,7 @@ namespace LargeFileReplacer
                     new ColumnDefinition{Width=new GridLength(1,GridUnitType.Auto) },//Open
                     new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star) },//Pick
                     new ColumnDefinition{Width=new GridLength(1,GridUnitType.Auto) },//double space
+                    new ColumnDefinition{Width=new GridLength(1,GridUnitType.Auto) },//Odd charactors
                 },
                 RowDefinitions =
                 {
@@ -321,6 +386,13 @@ namespace LargeFileReplacer
                     })).Set(0,0),
                     gridPick.Set(0,1),
                     new CheckBox{Content="Double Space", IsChecked=Targets.ds }.Set(new Action<bool>(v=>gridPick.IsEnabled=!( Targets.ds=v))).Set(0,2),
+                    new Button{Content="Summarize" }.Set(async btn=>
+                    {
+                        btn.IsEnabled=false;
+                        try{await Summarize(); }
+                        catch(Exception error){MessageBox.Show(error.ToString()); }
+                        finally{btn.IsEnabled=true; }
+                    }).Set(0,3),
                     new TextBox{Text=string.Join("", Targets.dict) }.Set(new Action<string>(s=>Targets.dict=new HashSet<char>( s))).Set(1,0).SetSpan(1,columnSpan),
                     new TextBox{ Text=Targets.replaceTo}.Set(new Action<string>(s=>Targets.replaceTo=s)).Set(2,0).SetSpan(1,columnSpan)
                 },
