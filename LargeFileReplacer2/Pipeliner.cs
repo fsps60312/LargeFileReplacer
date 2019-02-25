@@ -23,6 +23,7 @@ namespace LargeFileReplacer2
         protected void Write(char value) { writer.Write(value); }
         protected void Write(string value) { writer.Write(value); }
         protected void Write(char[]buffer,int index,int count) { writer.Write(buffer, index, count); }
+        protected void Flush() { writer.Flush(); }
         protected void SetReader(StreamReader reader) { this.reader = reader; }
         protected void SetWriter(StreamWriter writer) { this.writer = writer; }
         protected Pipeliner() { }
@@ -37,13 +38,16 @@ namespace LargeFileReplacer2
         protected virtual void Run()
         {
             var buffer = new char[chunkSize];
+            Progress = 0;
             while (true)
             {
                 var n = Read(buffer, 0, buffer.Length);
                 if (n == 0) break;
-                Progress += n;
+                Progress += reader.CurrentEncoding.GetByteCount(buffer, 0, n);
                 Write(buffer, 0, n);
+                Flush();
             }
+            writer.Close();
         }
         ~Pipeliner() { reader?.Dispose(); writer?.Dispose(); }
     }
