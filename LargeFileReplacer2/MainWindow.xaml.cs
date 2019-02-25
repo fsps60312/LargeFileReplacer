@@ -225,16 +225,18 @@ namespace LargeFileReplacer2
             var btn = new Button { Content="Start"};
             btn.Click +=async delegate
               {
+                  var t = new TargetsDef();
+                  t.MatchString = " ";
                   StreamReadPipe pipe1 = new StreamReadPipe(OpenFileRead());
-                  StreamWritePipe pipe2 = new StreamWritePipe(pipe1.ClientHandleString, OpenFileWrite());
-                  MessageBox.Show(pipe1.ClientHandleString);
+                  var pipe2 = new ReplacePipe(pipe1.ClientHandleString, t);
+                  StreamWritePipe pipe3 = new StreamWritePipe(pipe2.ClientHandleString, OpenFileWrite());
                   new Thread(() => pipe1.Start()).Start();
                   new Thread(() => pipe2.Start()).Start();
+                  new Thread(() => pipe3.Start()).Start();
                   while (true)
                   {
                       await Task.Delay(500);
-                      this.Title = $"{pipe1.Progress}/{pipe1.TotalProgress} {pipe1.Status} {pipe1.StatusString}, " +
-                      $"{pipe2.Progress}/{pipe2.TotalProgress} {pipe2.Status} {pipe2.StatusString}";
+                      this.Title = $"{pipe1}, {pipe2}, {pipe3}";
                   }
               };
             this.Content = btn;

@@ -4,20 +4,17 @@ using System.Diagnostics;
 
 namespace LargeFileReplacer2
 {
-    public class StreamReadPipe:Pipeliner
+    public class StreamReadPipe:ServerPipeliner
     {
-        public string ClientHandleString { get { return pipedServer.GetClientHandleAsString(); } }
-        AnonymousPipeServerStream pipedServer;
         public StreamReadPipe(Stream fileStream)
         {
             Trace.Assert(fileStream.CanRead);
             TotalProgress = fileStream.Length;
             SetReader(new StreamReader(fileStream));
-            SetWriter(new StreamWriter(pipedServer = new AnonymousPipeServerStream(PipeDirection.Out)));
+            SetWriter();
         }
-        protected override void Run()
+        protected override void PostProcess()
         {
-            base.Run();
             StatusString = "Read OK";
         }
     }

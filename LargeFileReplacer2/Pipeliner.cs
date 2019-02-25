@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Diagnostics;
+using System.IO.Pipes;
 
 namespace LargeFileReplacer2
 {
@@ -24,6 +25,7 @@ namespace LargeFileReplacer2
         protected void Write(string value) { writer.Write(value); }
         protected void Write(char[]buffer,int index,int count) { writer.Write(buffer, index, count); }
         protected void Flush() { writer.Flush(); }
+        protected void SetReader(string handleString) { SetReader(new StreamReader(new AnonymousPipeClientStream(PipeDirection.In, handleString))); }
         protected void SetReader(StreamReader reader) { this.reader = reader; }
         protected void SetWriter(StreamWriter writer) { this.writer = writer; }
         protected Pipeliner() { }
@@ -40,8 +42,16 @@ namespace LargeFileReplacer2
                 Status = PipeStatus.Finished;
             }
         }
-        protected virtual void Run()
+        protected virtual void EatChunk(char[]buffer,int n)
         {
+            Write(buffer, 0, n);
+            Flush();
+        }
+        protected virtual void PreProcess() { }
+        protected virtual void PostProcess() { }
+        private void Run()
+        {
+            PreProcess();
             var buffer = new char[chunkSize];
             Progress = 0;
             while (true)
@@ -49,10 +59,14 @@ namespace LargeFileReplacer2
                 var n = Read(buffer, 0, buffer.Length);
                 if (n == 0) break;
                 Progress += reader.CurrentEncoding.GetByteCount(buffer, 0, n);
-                Write(buffer, 0, n);
-                Flush();
+                EatChunk(buffer, n);
             }
+            PostProcess();
         }
         ~Pipeliner() { reader?.Dispose(); writer?.Dispose(); }
+        public override string ToString()
+        {
+            return $"{Progress}/{TotalProgress}[{Status}][{StatusString}]";
+        }
     }
 }
