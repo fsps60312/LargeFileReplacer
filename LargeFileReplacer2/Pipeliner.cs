@@ -31,9 +31,14 @@ namespace LargeFileReplacer2
         {
             Trace.Assert(Status == PipeStatus.NotStarted);
             Status = PipeStatus.Running;
-            try { Run(); }
+            try { Run(); writer.Close(); }
             catch (Exception error) { Exception = error; }
-            finally { Status = PipeStatus.Finished; }
+            finally
+            {
+                reader.Dispose();
+                writer.Dispose();
+                Status = PipeStatus.Finished;
+            }
         }
         protected virtual void Run()
         {
@@ -47,7 +52,6 @@ namespace LargeFileReplacer2
                 Write(buffer, 0, n);
                 Flush();
             }
-            writer.Close();
         }
         ~Pipeliner() { reader?.Dispose(); writer?.Dispose(); }
     }
