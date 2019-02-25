@@ -52,12 +52,22 @@ namespace LargeFileReplacer
             txb.TextChanged += delegate { action(txb.Text); };
             return txb;
         }
+        public static bool IsUserVisible(this FrameworkElement element, FrameworkElement container)
+        {
+            if (!element.IsVisible)
+                return false;
+
+            Rect bounds = element.TransformToAncestor(container).TransformBounds(new Rect(0.0, 0.0, element.ActualWidth, element.ActualHeight));
+            Rect rect = new Rect(0.0, 0.0, container.ActualWidth, container.ActualHeight);
+            return rect.IntersectsWith(bounds);
+        }
     }
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
     public partial class MainWindow : Window
     {
+        const string symbols_string = "~`!@#$%^&*()_-+={[}]|\\:;\"'<,>.?/";
         static class Targets
         {
             public static bool exclude = false;
@@ -69,12 +79,12 @@ namespace LargeFileReplacer
             }
             public static string replaceTo="";
             public static HashSet<char> dict = new HashSet<char>();
-            static HashSet<char> symbolDict = new HashSet<char>("~`!@#$%^&*()_-+={[}]|\\:;\"'<,>.?/");
+            static HashSet<char> symbolDict = new HashSet<char>(symbols_string);
             static bool IsInclude(char c)
             {
                 if (empty && char.IsWhiteSpace(c)) return true;
                 if ((space && c == ' ') || (t && c == '\t') || (r && c == '\r') || (n && c == '\n')) return true;
-                if ((az && char.IsLower(c)) || (AZ && char.IsUpper(c)) || (digit && char.IsDigit(c))) return true;
+                if ((az && 'a' <= c && c <= 'z'/*char.IsLower(c) <= this will include Greek*/) || (AZ && 'A' <= c && c <= 'Z'/*char.IsUpper(c)*/) || (digit && char.IsDigit(c))) return true;
                 if ((chinese && IsChinese(c)) || (symbol && symbolDict.Contains(c))) return true;
                 return dict.Contains(c);
             }
@@ -234,62 +244,157 @@ namespace LargeFileReplacer
                 {
                     StackPanel sp = new StackPanel { Orientation = Orientation.Vertical };
                     //for (int i = 0; i < 100; i++) sp.Children.Add(new Label { Content = $"#{i}" });
-                    new Window { Content = new ScrollViewer { Content = sp }, Width = 200 }.Show();
-                    Dictionary<char, long> charSet = new Dictionary<char, long>();
-                    Dictionary<char, Label> labels = new Dictionary<char, Label>();
-                    const int chunkSize = 1000000;
-                    long cnt = 0;
-                    Label labelTotal= new Label { Content = "..." };
+                    bool running = true, canceling = false;
+                    var window = new Window { Content = new ScrollViewer { Content = sp }, Width = 200 };
+                    window.Closing += (sender, e) =>
                     {
-                        Label _ = new Label { Content = "Total" };
-                        Grid.SetColumn(_, 0);
-                        Grid.SetColumn(labelTotal, 1);
+                        if (running && MessageBox.Show("Closing the window will also cancel the operation", "Sure to quit?", MessageBoxButton.OKCancel) == MessageBoxResult.Cancel) e.Cancel = true;
+                        else canceling = true;
+                    };
+                    window.Show();
+
+                    SemaphoreSlim semaphoreSlim_sets = new SemaphoreSlim(1);
+                    List<Grid> sp_elements_to_sort = new List<Grid>();
+                    Dictionary<Grid, char> grid_to_char = new Dictionary<Grid, char>();
+                    Dictionary<char, long> charSet = new Dictionary<char, long>();
+                    {
+                        Button
+                            buttonAlphaAscending = new Button { Content = "A↓" },
+                            buttonAlphaDescending = new Button { Content = "A↑" },
+                            buttonCountAscending = new Button { Content = "↓" },
+                            buttonCountDescending = new Button { Content = "↑" };
+                        Grid.SetColumn(buttonAlphaAscending, 0);
+                        Grid.SetColumn(buttonAlphaDescending, 1);
+                        Grid.SetColumn(buttonCountAscending, 2);
+                        Grid.SetColumn(buttonCountDescending, 3);
                         sp.Children.Add(new Grid
                         {
-                            ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) } },
-                            Children = { _, labelTotal }
+                            ColumnDefinitions =
+                            {
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
+                            },
+                            Children = { buttonAlphaAscending, buttonAlphaDescending,buttonCountAscending, buttonCountDescending }
+                        });
+                        var foo = new Action<int,bool>((sign,compare_count) =>
+                        {
+                            foreach (var g in sp_elements_to_sort) sp.Children.Remove(g);
+                            sp_elements_to_sort.Sort((a, b) => sign * (compare_count ?
+                                charSet[grid_to_char[a]].CompareTo(charSet[grid_to_char[b]]) :
+                                grid_to_char[a].CompareTo(grid_to_char[b])
+                            ));
+                            foreach (var g in sp_elements_to_sort) sp.Children.Add(g);
+                        });
+                        var bar = new Func<object, int,bool,Task>(async (sender, sign,compare_count) =>
+                           {
+                               try
+                               {
+                                   (sender as Button).IsEnabled = false;
+                                   await semaphoreSlim_sets.WaitAsync();
+                                   foo(sign, compare_count);
+                               }
+                               finally { (sender as Button).IsEnabled = true; lock (semaphoreSlim_sets) semaphoreSlim_sets.Release(); }
+                           });
+                        buttonCountAscending.Click += async (sender, e) => await bar(sender, 1, true);
+                        buttonCountDescending.Click += async (sender, e) => await bar(sender, -1, true);
+                        buttonAlphaAscending.Click += async (sender, e) => await bar(sender, 1, false);
+                        buttonAlphaDescending.Click += async (sender, e) => await bar(sender, -1, false);
+                    }
+
+                    Label labelTotalCount= new Label { FontWeight = FontWeights.Bold, Content = "...", HorizontalContentAlignment = HorizontalAlignment.Right };
+                    Label labelTotal = new Label { FontWeight = FontWeights.ExtraBold, Content = "Total", HorizontalContentAlignment = HorizontalAlignment.Center };
+                    {
+                        Grid.SetColumn(labelTotal, 0);
+                        Grid.SetColumn(labelTotalCount, 1);
+                        sp.Children.Add(new Grid
+                        {
+                            ColumnDefinitions =
+                            {
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
+                            },
+                            Children = { labelTotal, labelTotalCount }
                         });
                     }
-                    while (true)
                     {
-                        var buffer = new char[chunkSize];
-                        var n = await reader.ReadBlockAsync(buffer, 0, buffer.Length);
-                        if (n == 0) break;
-                        cnt += n;
-                        this.Title = $"Processing {cnt} / {reader.BaseStream.Length} ({(100.0 * cnt / reader.BaseStream.Length).ToString("F3")}%)";
-                        Array.Resize(ref buffer, n);
-                        buffer =await Task.Run(()=> buffer.Where(c => Targets.IsMatch(c)).ToArray());
-                        foreach (char c in buffer)
+                        string desired_title = this.Title = "Initialing...";
+                        Dictionary<Label, char> labels = new Dictionary<Label, char>();
+                        var io_thread = new Thread(() =>
                         {
-                            if (!charSet.ContainsKey(c))
+                            const int chunkSize = 1000000;
+                            long cnt = 0;
+                            while ( !canceling)
                             {
-                                charSet.Add(c, 0);
-                                Label l = new Label { Content = "..." };
+                                var buffer = new char[chunkSize];
+                                var n = reader.ReadBlock(buffer, 0, buffer.Length);
+                                if (n == 0) break;
+                                cnt += n;
+                                Dispatcher.Invoke(() => this.Title = $"Processing {cnt} / {reader.BaseStream.Length} ({(100.0 * cnt / reader.BaseStream.Length).ToString("F3")}%)");
+                                Array.Resize(ref buffer, n);
+                                buffer = buffer.Where(c => Targets.IsMatch(c)).ToArray();
+                                semaphoreSlim_sets.Wait();
+                                foreach (char c in buffer)
                                 {
-                                    TextBox _ = new TextBox { Text = c.ToString() };
-                                    Grid.SetColumn(_, 0);
-                                    Grid.SetColumn(l, 1);
-                                    sp.Children.Add(new Grid
+                                    if (!charSet.ContainsKey(c))
                                     {
-                                        ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) } },
-                                        Children = { _, l }
-                                    });
+                                        charSet.Add(c, 0);
+                                        Dispatcher.Invoke(() =>
+                                        {
+                                            Label l = new Label {FontStyle=FontStyles.Italic, Content = "...", HorizontalContentAlignment = HorizontalAlignment.Right };
+                                            {
+                                                //https://docs.microsoft.com/zh-tw/dotnet/csharp/programming-guide/types/how-to-convert-between-hexadecimal-strings-and-numeric-types
+                                                Label code = new Label { FontFamily = new FontFamily("Consolas"), Content = $"\\u{ Convert.ToInt32(c):X2}" };
+                                                TextBox _ = new TextBox { Text = c.ToString() };
+                                                Grid.SetColumn(_, 0);
+                                                Grid.SetColumn(code, 1);
+                                                Grid.SetColumn(l, 2);
+                                                var g = new Grid
+                                                {
+                                                    ColumnDefinitions =
+                                                    {
+                                                        new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                                        new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                                                        new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) }
+                                                    },
+                                                    Children = { _, code, l }
+                                                };
+                                                sp_elements_to_sort.Add(g);
+                                                grid_to_char.Add(g, c);
+                                                sp.Children.Add(g);
+                                            }
+                                            labels.Add(l, c);
+                                        });
+                                    }
+                                    charSet[c]++;
                                 }
-                                labels.Add(c, l);
+                                lock(semaphoreSlim_sets) semaphoreSlim_sets.Release();
                             }
-                            charSet[c]++;
-                        }
-                        foreach (var p in charSet)
+                            running = false;
+                        });
+                        io_thread.Start();
+                        for (int tolerance = 1; running || (tolerance--) > 0;)
                         {
-                            labels[p.Key].Content = p.Value.ToString();
-                            await Task.Delay(0);
+                            await Task.Delay(500);
+                            await semaphoreSlim_sets.WaitAsync();
+                            foreach (var p in labels)
+                            {
+                                if (p.Key.IsUserVisible(window) || tolerance <= 0)
+                                {
+                                    p.Key.Content = charSet[p.Value].ToString();
+                                }
+                            }
+                            labelTotal.Content = $"Total ({charSet.Count})";
+                            labelTotalCount.Content = charSet.Sum(p => p.Value).ToString();
+                            lock (semaphoreSlim_sets) semaphoreSlim_sets.Release();
                         }
-                        labelTotal.Content = charSet.Sum(p => p.Value).ToString();
                     }
-                    this.Title = $"OK - {DateTime.Now}";
+                    this.Title = $"{(canceling?"Canceled":"OK")} - {DateTime.Now}";
                 }
             }
         }
+
         void InitializeViews()
         {
             this.Width = 950;
@@ -333,8 +438,8 @@ namespace LargeFileReplacer
                     new CheckBox{Content="a~z", IsChecked=Targets.az }.Set(new Action<bool>(v=>Targets.az=v)).Set(0,2),
                     new CheckBox{Content="A~Z", IsChecked=Targets.AZ }.Set(new Action<bool>(v=>Targets.AZ=v)).Set(0,3),
                     new CheckBox{Content="0~9", IsChecked=Targets.digit }.Set(new Action<bool>(v=>Targets.digit=v)).Set(0,4),
-                    new CheckBox{Content="Symbols",IsChecked=Targets.symbol}.Set(new Action<bool>(v=>Targets.symbol=v)).Set(0,5),
-                    new CheckBox{Content="中文", IsChecked=Targets.chinese }.Set(new Action<bool>(v=>Targets.chinese=v)).Set(0,6),
+                    new CheckBox{Content="Symbols",IsChecked=Targets.symbol,ToolTip=symbols_string }.Set(new Action<bool>(v=>Targets.symbol=v)).Set(0,5),
+                    new CheckBox{Content="中文", IsChecked=Targets.chinese,ToolTip="[\\u4e00-\\u9fff]" }.Set(new Action<bool>(v=>Targets.chinese=v)).Set(0,6),
                     new Button{Content="MultiThread"}.Set(new Action<Button>(async btn=>
                     {
                         btn.IsEnabled=false;
@@ -385,7 +490,7 @@ namespace LargeFileReplacer
                         finally{btn.IsEnabled=true; }
                     })).Set(0,0),
                     gridPick.Set(0,1),
-                    new CheckBox{Content="Double Space", IsChecked=Targets.ds }.Set(new Action<bool>(v=>gridPick.IsEnabled=!( Targets.ds=v))).Set(0,2),
+                    new CheckBox{Content="Merge Spaces", IsChecked=Targets.ds }.Set(new Action<bool>(v=>gridPick.IsEnabled=!( Targets.ds=v))).Set(0,2),
                     new Button{Content="Summarize" }.Set(async btn=>
                     {
                         btn.IsEnabled=false;
