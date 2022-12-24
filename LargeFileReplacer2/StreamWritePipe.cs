@@ -14,7 +14,7 @@ namespace LargeFileReplacer2
         }
         protected override void PostProcess()
         {
-            StatusString = "Write OK";
+            StatusString = "Write-OK";
         }
     }
 }

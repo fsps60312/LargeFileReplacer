@@ -228,7 +228,7 @@ namespace LargeFileReplacer2
                   var t = new TargetsDef();
                   t.MatchString = " ";
                   StreamReadPipe pipe1 = new StreamReadPipe(OpenFileRead());
-                  var pipe2 = new ReplacePipe(pipe1.ClientHandleString, t);
+                  var pipe2 = new ReplacePipe(pipe1.ClientHandleString, t) { replaceTo = "-" };
                   StreamWritePipe pipe3 = new StreamWritePipe(pipe2.ClientHandleString, OpenFileWrite());
                   new Thread(() => pipe1.Start()).Start();
                   new Thread(() => pipe2.Start()).Start();

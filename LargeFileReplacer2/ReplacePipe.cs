@@ -11,7 +11,7 @@ namespace LargeFileReplacer2
     class ReplacePipe:AutoPipeliner
     {
         public TargetsDef Targets;
-        string replaceTo = "";
+        public string replaceTo = "";
         public ReplacePipe(string handleString,TargetsDef targets) : base(handleString)
         {
             this.Targets = targets;
